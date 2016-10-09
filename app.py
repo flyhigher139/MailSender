@@ -3,6 +3,7 @@
 
 import os
 from flask import Flask, request, redirect, url_for, current_app
+from flask.views import MethodView
 from flask_mail import Mail, Message
 
 app = Flask(__name__)
@@ -17,9 +18,31 @@ class Config(object):
     MAIL_USERNAME = os.environ.get('MAIL_USERNAME')
     MAIL_PASSWORD = os.environ.get('MAIL_PASSWORD')
 
+USER_PASSWORD_PAIRS = os.environ.get('USER_PASSWORD_PAIRS') or 'admin,admin, gevin,gevin'
+
+
+#########################
+# initialization
+#########################
 
 app.config.from_object(Config)
 mail.init_app(app)
+
+
+#########################
+# functions
+#########################
+
+def get_user_passwords():
+    user_password_pairs = USER_PASSWORD_PAIRS
+    user_password_list = [pair.strip() for pair in user_password_pairs.split(',')]
+    users = user_password_list[0::2]
+    passwords = user_password_list[1::2]
+
+    user_dict = dict(zip(users, passwords))
+
+    return user_dict
+
 
 
 def send_mails(recipients, cc, mail_title, mail_body):
@@ -33,6 +56,12 @@ def send_mails(recipients, cc, mail_title, mail_body):
     mail.send(msg)
 
 
+##########################
+# Views and APIs
+##########################
+
+auth = get_user_passwords()
+
 @app.route('/')
 def index():
     return 'This is a mail server'
@@ -40,6 +69,12 @@ def index():
 @app.route('/mail/', methods=['GET', 'POST'])
 def mail_view():
     if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+
+        if password != auth.get(username):
+            return 'Username or Password error', 401
+
         recipients = request.form.get('recipients')
         recipients = [recipient.strip() for recipient in recipients.split(',')]
 
@@ -78,6 +113,10 @@ def mail_view():
                         <textarea class="form-control" rows="6" name="body"></textarea>
                     </div>
                     <div class="form-group">
+                        <label>Username:</label><input type="text", name="username" class="form-control" >
+                        <label>Password:</label><input type="password", name="password" class="form-control" >
+                    </div>
+                    <div class="form-group">
                         <button type="submit" value="Submit" class="btn btn-primary">Submit</button>
                     </div>
                 </form>
@@ -86,6 +125,30 @@ def mail_view():
         </body>
     </html>
     '''
+
+class SendMailView(MethodView):
+    def get(self):
+        return 'Send mails by `POST` method'
+
+    def post(self):
+        auth_info = request.authorization
+        if not auth_info or auth_info.password != auth.get(auth_info.username):
+            return 'Username or Password error', 401
+
+        data = request.get_json()
+
+        recipients = data.get('recipients')
+
+        cc = data.get('cc')
+
+        title = data.get('title')
+        body = data.get('body')
+
+        send_mails(recipients, cc, title, body)
+
+        return 'Succeed to send mails'
+
+app.add_url_rule('/mail/api/', view_func=SendMailView.as_view('send_mail_view'))
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
